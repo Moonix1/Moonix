@@ -53,12 +53,11 @@ fn main() -> Status {
 	
 	ALLOC.init(mmap);
 
-	let mut v = vec![
-		123453,
-		69696,
-		23453,
-		245436455
-	];
+	let mut v: Vec<i64> = Vec::new();
+
+	for i in 0..100 {
+		v.push(i);
+	}
 
 	info!("{:?}", v);
 

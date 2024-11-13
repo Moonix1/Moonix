@@ -3,8 +3,7 @@ use core::{alloc::{
 }, sync::atomic::{AtomicPtr, Ordering}};
 
 use boot::MemoryType;
-use log::info;
-use uefi::{mem::memory_map::{MemoryMap, MemoryMapOwned}, prelude::*, println};
+use uefi::{mem::memory_map::{MemoryMap, MemoryMapOwned}, prelude::*};
 
 #[repr(C, packed)]
 struct FreeSegment {
@@ -76,6 +75,47 @@ unsafe fn get_header_ptr(segment: &FreeSegment, layout: &Layout) -> Option<*mut 
 	Some(ptr)
 }
 
+unsafe fn get_allocated_header_ptr(ptr: *mut u8) -> *mut UsedSegment {
+	ptr.sub(core::mem::size_of::<UsedSegment>()) as *mut UsedSegment
+}
+
+unsafe fn merge_if_adjacent(a: *mut FreeSegment, b: *mut FreeSegment) {
+	if (a as *mut u8).add((*a).size + core::mem::size_of::<FreeSegment>()) == b as *mut u8 {
+		(*a).size = (*a).size + core::mem::size_of::<FreeSegment>() + (*b).size;
+		(*a).next_segment = (*b).next_segment;
+	}
+}
+
+unsafe fn insert_segment_to_list(list_head: *mut FreeSegment, new_segment: *mut FreeSegment) {
+    let mut it = list_head;
+    
+    if it.is_null() {
+        (*new_segment).next_segment = core::ptr::null_mut();
+        return;
+    }
+
+    while !it.is_null() {
+        assert!(it < new_segment);
+
+        if (*it).next_segment.is_null() || (*it).next_segment > new_segment {
+            let next = (*it).next_segment;
+            (*it).next_segment = new_segment;
+            (*new_segment).next_segment = next;
+
+            if !next.is_null() {
+                merge_if_adjacent(new_segment, next);
+            }
+            merge_if_adjacent(it, new_segment);
+            return;
+        }
+
+        it = (*it).next_segment;
+    }
+    
+    panic!("Failed to insert segment into list");
+}
+
+
 unsafe impl GlobalAlloc for Allocator {
 	unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
 		let mut free_block_it = self.first_free.load(Ordering::Relaxed);
@@ -107,7 +147,13 @@ unsafe impl GlobalAlloc for Allocator {
 		panic!("Failed to allocate!");
 	}
 
-	unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-		unimplemented!()
+	unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+		let header_ptr = get_allocated_header_ptr(ptr);
+		let size = (*header_ptr).size;
+
+		let free_segment_ptr = header_ptr as *mut FreeSegment;
+		(*free_segment_ptr).size = size;
+
+		insert_segment_to_list(self.first_free.load(Ordering::Relaxed), free_segment_ptr);
 	}
 }
