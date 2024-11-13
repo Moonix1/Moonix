@@ -1,0 +1,16 @@
+[package]
+name = "moonix-kernel"
+version = "0.1.0"
+edition = "2021"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[dependencies]
+uefi = { version = "0.33.0", features = ["logger"] }
+uefi-services = "0.25.0"
+
+log = "0.4.22"
