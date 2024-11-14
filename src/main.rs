@@ -1,17 +1,20 @@
 #![no_main]
 #![no_std]
 
-use core::{mem, num::NonZero, panic::PanicInfo, ptr::NonNull};
+use core::{panic::PanicInfo, ptr::NonNull};
 
 extern crate uefi;
 extern crate alloc;
 
 mod allocator;
 
+#[macro_use]
+mod io;
+
 use alloc::vec::*;
-use alloc::vec;
 use boot::MemoryType;
-use uefi::{mem::memory_map::MemoryMap, prelude::*};
+use io::serial::Serial;
+use uefi::prelude::*;
 use log::*;
 
 #[global_allocator]
@@ -37,25 +40,18 @@ fn main() -> Status {
 
 	// Allocate 1MB of stack space
 	let (stack_ptr, stack_end) = setup_stack(1 * 1024 * 1024);
-	
-	let mmap = boot::memory_map(MemoryType::LOADER_DATA).unwrap();
-	let mut total_len = 0;
-	for i in 0..mmap.len() {
-		let desc = &mmap[i];
-		let len = desc.page_count * 4096;
-		total_len += len;
-		info!("size {}, len: {}, addr: {:#X}", size_of_val(desc), len, desc.phys_start);
-	}
 
-	info!("{}MB", total_len / 1024 / 1024);
-	info!("stack start: {:#X}", stack_ptr.unwrap().addr());
-	info!("stack end: {:#X}", stack_end.addr());
+	let mmap = boot::memory_map(MemoryType::LOADER_DATA).unwrap();
 	
+	Serial::init().expect("Failed to initialize serial!");
+	sprintln!("Hello from serial!!!");
+
+	// Initialize Allocator
 	ALLOC.init(mmap);
 
 	let mut v: Vec<i64> = Vec::new();
 
-	for i in 0..100 {
+	for i in 0..23 {
 		v.push(i);
 	}
 
