@@ -27,6 +27,11 @@ fn outb(addr: u16, val: u8) {
 
 pub mod serial;
 
+pub fn exit(code: u8) {
+	const ISA_DEBUG_EXIT_PORT: u16 = 0xf4;
+	outb(ISA_DEBUG_EXIT_PORT, code);
+}
+
 #[allow(unused_macros)]
 macro_rules! sprint {
 	($($arg:tt)*) => {

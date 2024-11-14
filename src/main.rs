@@ -59,7 +59,9 @@ fn main() -> Status {
 
     trace!("Hello world!");
     
-	loop {}
+	io::exit(0);
+
+	Status::SUCCESS
 }
 
 #[panic_handler]
