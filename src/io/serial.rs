@@ -1,54 +1,116 @@
-use crate::io::{inb, outb};
+use crate::io::port_manager::{Port, PortManager};
 
-const PORT: u16 = 0x3F8;
+use thiserror_no_std::Error;
 
-fn is_transmit_empty() -> bool {
-	inb(PORT + 5) & 0x20 == 0
+const BASE_ADDR: u16 = 0x3f8;
+
+#[derive(Debug, Error)]
+pub enum SerialInitError {
+    #[error("data port reserved")]
+    DataReserved,
+    #[error("enable interrupt port reserved")]
+    EnableInterruptReserved,
+    #[error("interrupt id port reserved")]
+    InterruptIdReserved,
+    #[error("line control port reserved")]
+    LineControlReserved,
+    #[error("modem control port reserved")]
+    ModemControlReserved,
+    #[error("line status port reserved")]
+    LineStatusReserved,
+    #[error("modem status port reserved")]
+    ModemStatusReserved,
+    #[error("scratch port reserved")]
+    ScratchReserved,
+    #[error("loopback test failed")]
+    Loopback,
 }
 
-pub static mut SERIAL: Serial = Serial {};
-
-fn write_serial(a: u8) {
-	while is_transmit_empty() {}
-
-	outb(PORT, a);
+pub struct Serial {
+    data: Port,
+    _enable_interrupt: Port,
+    _interrupt_id_fifo_control: Port,
+    _line_control: Port,
+    _modem_control: Port,
+    line_status: Port,
+    _modem_status: Port,
+    _scratch: Port,
 }
-
-#[derive(Debug)]
-pub struct SerialInitFault;
-
-pub struct Serial {}
 
 impl Serial {
-	pub fn init() -> Result<(), SerialInitFault> {
-		outb(PORT + 1, 0x00); // Disable all interrupts
-		outb(PORT + 3, 0x80); // Enable DLAB (set baud rate divisor)
-		outb(PORT + 0, 0x03); // Set divisor to 3 (low byte) for 38400 baud
-		outb(PORT + 1, 0x00); // Set divisor high byte to 0
-		outb(PORT + 3, 0x03); // 8 bits, no parity, one stop bit
-		outb(PORT + 2, 0xC7); // Enable FIFO, clear them, with 14-byte threshold
-		outb(PORT + 4, 0x0B); // IRQs enabled, RTS/DSR set
-		outb(PORT + 4, 0x1E); // Set in loopback mode, test the serial chip
-		outb(PORT + 0, 0xAE); // Send byte 0xAE and check if it is received
+    pub fn new(port_manager: &mut PortManager) -> Result<Serial, SerialInitError> {
+        use SerialInitError::*;
 
-		// Check if the serial port is faulty (i.e., if it didn't return 0xAE)
-		if inb(PORT + 0) != 0xAE {
-			return Err(SerialInitFault);
-		}
+        let mut data = port_manager.request_port(BASE_ADDR).ok_or(DataReserved)?;
+        let mut enable_interrupt = port_manager
+            .request_port(BASE_ADDR + 1)
+            .ok_or(EnableInterruptReserved)?;
+        let mut interrupt_id_fifo_control = port_manager
+            .request_port(BASE_ADDR + 2)
+            .ok_or(InterruptIdReserved)?;
+        let mut line_control = port_manager
+            .request_port(BASE_ADDR + 3)
+            .ok_or(LineControlReserved)?;
+        let mut modem_control = port_manager
+            .request_port(BASE_ADDR + 4)
+            .ok_or(ModemControlReserved)?;
+        let line_status = port_manager
+            .request_port(BASE_ADDR + 5)
+            .ok_or(LineStatusReserved)?;
+        let modem_status = port_manager
+            .request_port(BASE_ADDR + 6)
+            .ok_or(ModemStatusReserved)?;
+        let scratch = port_manager
+            .request_port(BASE_ADDR + 7)
+            .ok_or(ScratchReserved)?;
 
-		// Set normal operation mode (disable loopback mode)
-		outb(PORT + 4, 0x0F);
+        enable_interrupt.writeb(0x00); // Disable all interrupts
+        line_control.writeb(0x80); // Enable DLAB (set baud rate divisor)
+        data.writeb(0x03); // Set divisor to 3 (lo byte) 38400 baud
+        enable_interrupt.writeb(0x00); //                  (hi byte)
+        line_control.writeb(0x03); // 8 bits, no parity, one stop bit
+        interrupt_id_fifo_control.writeb(0xC7); // Enable FIFO, clear them, with 14-byte threshold
+        modem_control.writeb(0x0B); // IRQs enabled, RTS/DSR set
+        modem_control.writeb(0x1E); // Set in loopback mode, test the serial chip
+        data.writeb(0xAE); // Test serial chip (send byte 0xAE and check if serial returns same byte)
 
-		Ok(())
-	}
+        // Check if serial is faulty (i.e: not same byte as sent)
+        if data.readb() != 0xAE {
+            return Err(Loopback);
+        }
+
+        // If serial is not faulty set it in normal operation mode
+        // (not-loopback with IRQs enabled and OUT#1 and OUT#2 bits enabled)
+        modem_control.writeb(0x0F);
+
+        Ok(Serial {
+            data,
+            _enable_interrupt: enable_interrupt,
+            _interrupt_id_fifo_control: interrupt_id_fifo_control,
+            _line_control: line_control,
+            _modem_control: modem_control,
+            line_status,
+            _modem_status: modem_status,
+            _scratch: scratch,
+        })
+    }
+
+    fn is_transmit_empty(&mut self) -> u8 {
+        self.line_status.readb() & 0x20
+    }
+
+    fn write_byte(&mut self, a: u8) {
+        while self.is_transmit_empty() == 0 {}
+
+        self.data.writeb(a);
+    }
 }
 
 impl core::fmt::Write for Serial {
-	fn write_str(&mut self, s: &str) -> core::fmt::Result {
-		for b in s.as_bytes() {
-			write_serial(*b);
-		}
-
-		Ok(())
-	}
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        for b in s.as_bytes() {
+            self.write_byte(*b)
+        }
+        Ok(())
+    }
 }

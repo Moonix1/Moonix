@@ -11,14 +11,10 @@ mod allocator;
 #[macro_use]
 mod io;
 
-use alloc::vec::*;
 use boot::MemoryType;
 use io::serial::Serial;
 use uefi::prelude::*;
 use log::*;
-
-#[global_allocator]
-static ALLOC: allocator::Allocator = allocator::Allocator::new();
 
 fn setup_stack(stack_size: usize) -> (Result<NonNull<u8>, Status>, NonNull<u8>) {
 	let aligned_size = (stack_size + 4095) & !4095;
@@ -35,31 +31,22 @@ fn setup_stack(stack_size: usize) -> (Result<NonNull<u8>, Status>, NonNull<u8>) 
 }
 
 #[entry]
-fn main() -> Status {
+unsafe fn main() -> Status {
     uefi::helpers::init().unwrap();
 
 	// Allocate 1MB of stack space
-	let (stack_ptr, stack_end) = setup_stack(1 * 1024 * 1024);
-
+	let (stack_ptr, stack_end) =
+		setup_stack(1 * 1024 * 1024);
 	let mmap = boot::memory_map(MemoryType::LOADER_DATA).unwrap();
-	
-	Serial::init().expect("Failed to initialize serial!");
-	sprintln!("Hello from serial!!!");
 
-	// Initialize Allocator
-	ALLOC.init(mmap);
+	allocator::init(mmap);
+    let mut port_manager = io::port_manager::PortManager::new();
+    io::init_stdio(&mut port_manager);
+    io::init_late(&mut port_manager);
 
-	let mut v: Vec<i64> = Vec::new();
+	sprintln!("Hello there!");
 
-	for i in 0..23 {
-		v.push(i);
-	}
-
-	info!("{:?}", v);
-
-    trace!("Hello world!");
-    
-	io::exit(0);
+	loop {}
 
 	Status::SUCCESS
 }

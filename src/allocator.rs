@@ -35,29 +35,32 @@ impl Allocator {
 	pub const fn new() -> Self {
 		Self { first_free: AtomicPtr::new(core::ptr::null_mut()) }
 	}
+}
 
-	pub fn init(&self, mmap: MemoryMapOwned) {
-		assert_eq!(core::mem::size_of::<UsedSegment>(), core::mem::size_of::<FreeSegment>());
+#[global_allocator]
+static ALLOC: Allocator = Allocator::new();
 
-		let big_block = mmap.entries().find(|entry| {
-			entry.ty == MemoryType::LOADER_DATA
-		}).expect("Failed to find big block of RAM!");
+pub fn init(mmap: MemoryMapOwned) {
+	assert_eq!(core::mem::size_of::<UsedSegment>(), core::mem::size_of::<FreeSegment>());
 
-		let big_block_start = big_block.phys_start as *mut u8;
-		let big_block_size = big_block.page_count * 4096;
+	let big_block = mmap.entries().find(|entry| {
+		entry.ty == MemoryType::LOADER_DATA
+	}).expect("Failed to find big block of RAM!");
 
-		let segment_start = unsafe { big_block_start.add(core::mem::size_of::<FreeSegment>()) };
+	let big_block_start = big_block.phys_start as *mut u8;
+	let big_block_size = big_block.page_count * 4096;
 
-		let segment_size = big_block_size as usize - core::mem::size_of::<FreeSegment>();
+	let segment_start = unsafe { big_block_start.add(core::mem::size_of::<FreeSegment>()) };
 
-		let segment = segment_start as *mut FreeSegment;
-		unsafe {
-			(*segment).size = segment_size;
-			(*segment).next_segment = core::ptr::null_mut();
-		}
+	let segment_size = big_block_size as usize - core::mem::size_of::<FreeSegment>();
 
-		self.first_free.store(segment, Ordering::Relaxed);
+	let segment = segment_start as *mut FreeSegment;
+	unsafe {
+		(*segment).size = segment_size;
+		(*segment).next_segment = core::ptr::null_mut();
 	}
+
+	ALLOC.first_free.store(segment, Ordering::Relaxed);
 }
 
 unsafe fn get_header_ptr(segment: &FreeSegment, layout: &Layout) -> Option<*mut u8> {
